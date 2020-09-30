@@ -3,24 +3,17 @@ import {
     DataPatterns,
     AxisScrollStrategies,
     emptyFill,
-    emptyTick,
-    UIOrigins,
     emptyLine,
     SeriesXYFormatter,
     LineSeries,
-    UILayoutBuilders,
-    UIDraggingModes,
-    UIElementBuilders,
     SolidFill,
-    ColorHEX,
-    UIBackgrounds,
     AxisTickStrategies,
     SolidLine,
     ColorRGBA,
-    translatePoint,
     Themes
 } from "@arction/lcjs"
-import { createProgressiveRandomGenerator } from "@arction/xydata"
+
+import { data } from './data'
 
 // Use theme if provided
 const urlParams = new URLSearchParams(window.location.search);
@@ -30,11 +23,12 @@ if (urlParams.get('theme') == 'light')
 
 // Define channels.
 const channels = [
-    'Ch 1',
-    'Ch 2',
-    'Ch 3',
-    'Ch 4',
-    'Ch 5'
+    'LEAD 1',
+    'LEAD 2',
+    'LEAD 3',
+    'aVR',
+    'aVL',
+    'aVF'
 ]
 // This is more like a guideline (streaming uses JS setInterval, which is not precise). Refer to in-chart PPS indicator for actual value.
 const approxPointsPerSecondChannel = 10000
@@ -94,26 +88,14 @@ const series = channels.map((ch, i) => {
     return series
 })
 
-// Create random progressive data stream using 'xydata' library.
-let pointsAdded = 0
-const randomPointGenerator = createProgressiveRandomGenerator()
-    // Generator will repeat same Y values after every 10k points.
-    .setNumberOfPoints(10 * 1000)
 series.forEach((series, i) => {
-    const streamInterval = 1000 / 60
-    const streamBatchSize = Math.ceil(approxPointsPerSecondChannel / streamInterval)
-    randomPointGenerator
-        .generate()
-        .setStreamRepeat(true)
-        .setStreamBatchSize(streamBatchSize)
-        .setStreamInterval(streamInterval)
-        .toStream()
-        .forEach((point) => {
-            // Increase Y coordinate based on Series index, so that Series aren't on top of each other.
-            point.y += i * channelHeight + i * channelGap
-            series.add(point)
-            pointsAdded++
-        })
+    const seriesDataKey = Object.keys(data).find(key=>key.includes((i+1).toString(10)))
+    const seriesData = data[seriesDataKey]
+    
+    for(let j = 0; j < seriesData.length; j+=1){
+        seriesData[j] += i*channelHeight + i*channelGap+0.5
+    }
+    series.addArrayY(seriesData)
 })
 
 // Style AutoCursor.
@@ -127,80 +109,7 @@ const resultTableFormatter: SeriesXYFormatter = (tableContentBuilder, activeSeri
     return tableContentBuilder
         .addRow(activeSeries.getName())
         .addRow('X', '', activeSeries.axisX.formatValue(x))
-        // Translate Y coordinate back to [0, 1].
-        .addRow('Y', '', activeSeries.axisY.formatValue(y - (seriesIndex * channelHeight + seriesIndex * channelGap)))
+        // Translate Y coordinate back to [-1, 1].
+        .addRow('Y', '', activeSeries.axisY.formatValue(y - (seriesIndex * channelHeight + seriesIndex * channelGap + 0.5)))
 }
 series.forEach((series) => series.setResultTableFormatter(resultTableFormatter))
-
-const indicatorPos = translatePoint({
-    x: axisX.scale.getInnerStart(),
-    y: axisY.scale.getInnerEnd()
-}, {
-    x: axisX.scale,
-    y: axisY.scale
-},
-    chart.uiScale
-)
-
-// Create indicators for points-per-second and frames-per-second.
-const indicatorLayout = chart.addUIElement(
-    UILayoutBuilders.Column
-        .setBackground(UIBackgrounds.Rectangle),
-    // Position UIElement with Axis coordinates.
-    chart.uiScale
-)
-    .setOrigin(UIOrigins.LeftTop)
-    .setPosition(indicatorPos)
-    .setDraggingMode(UIDraggingModes.notDraggable)
-    // Set dark, tinted Background style.
-    .setBackground((background) => background
-        .setFillStyle(new SolidFill({ color: ColorHEX('#000').setA(150) }))
-        .setStrokeStyle(emptyLine)
-    )
-// FPS indicator.
-const fpsPrefix = 'Rendering frames-per-second (FPS)'
-const indicatorFPS = indicatorLayout.addElement(UIElementBuilders.TextBox)
-    .setText(fpsPrefix)
-    .setFont((font) => font
-        .setWeight('bold')
-    )
-
-// PPS indicator.
-const ppsPrefix = 'Incoming data, at rate of points-per-second (PPS)'
-const indicatorPPS = indicatorLayout.addElement(UIElementBuilders.TextBox)
-    .setText(ppsPrefix)
-    .setFont((font) => font
-        .setWeight('bold')
-    )
-
-// Measure FPS.
-let frameCount = 0
-let frameDelaySum = 0
-let framePrevious: number | undefined
-const measureFPS = () => {
-    const now = window.performance.now()
-    frameCount++
-    if (framePrevious)
-        frameDelaySum += now - framePrevious
-    framePrevious = now
-    requestAnimationFrame(measureFPS)
-}
-requestAnimationFrame(measureFPS)
-
-// Update displayed FPS and PPS on regular intervals.
-let displayPrevious = window.performance.now()
-setInterval(() => {
-    const now = window.performance.now()
-    const delta = now - displayPrevious
-    const fps = 1000 / (frameDelaySum / frameCount)
-    const pps = 1000 * pointsAdded / delta
-
-    indicatorFPS.setText(`${fpsPrefix}: ${fps.toFixed(1)}`)
-    indicatorPPS.setText(`${ppsPrefix}: ${pps.toFixed(0)}`)
-
-    // Reset counters.
-    frameDelaySum = 0
-    frameCount = 0
-    pointsAdded = 0
-    displayPrevious = now
-}, 1000)
